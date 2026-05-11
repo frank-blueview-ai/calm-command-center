@@ -21,23 +21,29 @@ Then generate a shareable visual brief card with **Image Gen**.
 
 ## Tech
 - Node + Express
-- OpenAI Chat Completions with **GPT-5.5**
-- OpenAI Images with **gpt-image-1**
+- Dual runtime modes:
+  - **OpenAI API mode**: GPT-5.5 + gpt-image-1
+  - **Codex login mode (no API key)**: uses `openclaw agent` via your existing Codex/Gateway auth
 - Web Speech API for quick voice capture in browser
 
 ## Quick start
 ```bash
 cp .env.example .env
-# fill OPENAI_API_KEY
 npm install
 npm run dev
 ```
 
 Open: `http://localhost:8790`
 
-## Env
+### Mode A — Codex login mode (no API key)
+Use this when you rely on your existing OpenClaw/Codex login.
+- Leave `OPENAI_API_KEY` empty.
+- App routes analysis through `openclaw agent` (gateway model/auth).
+- Image card generation tries tool-assisted image generation and falls back to a local SVG brief card.
+
+### Mode B — OpenAI API mode (full GPT-5.5 + gpt-image-1 showcase)
+Set API key in `.env`:
 ```env
-PORT=8790
 OPENAI_API_KEY=...
 OPENAI_TEXT_MODEL=gpt-5.5
 OPENAI_IMAGE_MODEL=gpt-image-1

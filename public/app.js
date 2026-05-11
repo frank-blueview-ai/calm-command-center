@@ -85,7 +85,8 @@ async function generateCard() {
     if (!res.ok) throw new Error(data.error || 'Image generation failed');
 
     if (data.imageBase64) {
-      cardImage.src = `data:image/png;base64,${data.imageBase64}`;
+      const mime = data.mimeType || 'image/png';
+      cardImage.src = `data:${mime};base64,${data.imageBase64}`;
     } else if (data.imageUrl) {
       cardImage.src = data.imageUrl;
     } else {
