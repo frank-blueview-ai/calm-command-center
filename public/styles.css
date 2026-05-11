@@ -45,7 +45,9 @@ textarea, input, select {
   padding: 0.65rem;
 }
 .row { display: grid; grid-template-columns: 1fr 2fr; gap: 0.8rem; margin-top: 0.8rem; }
-.actions { grid-template-columns: repeat(3, minmax(160px, 1fr)); }
+.actions { grid-template-columns: repeat(5, minmax(140px, 1fr)); }
+.inline-check { margin-top: 0.7rem; color: var(--muted); font-weight: 500; display: flex; align-items: center; gap: 0.5rem; }
+.inline-check input { width: auto; }
 button {
   border: 1px solid #3d7fbc;
   background: #123054;

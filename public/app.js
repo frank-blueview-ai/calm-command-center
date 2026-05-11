@@ -4,6 +4,9 @@ const goal = document.getElementById('goal');
 const analyzeBtn = document.getElementById('analyzeBtn');
 const cardBtn = document.getElementById('cardBtn');
 const voiceBtn = document.getElementById('voiceBtn');
+const liveTurnBtn = document.getElementById('liveTurnBtn');
+const stopSpeakBtn = document.getElementById('stopSpeakBtn');
+const autoSpeak = document.getElementById('autoSpeak');
 const statusEl = document.getElementById('status');
 const result = document.getElementById('result');
 const imageSection = document.getElementById('imageSection');
@@ -12,12 +15,14 @@ const copySafe = document.getElementById('copySafe');
 
 let latestAnalysis = null;
 
-analyzeBtn.addEventListener('click', runAnalysis);
+analyzeBtn.addEventListener('click', () => runAnalysis({ speakReply: autoSpeak.checked }));
 cardBtn.addEventListener('click', generateCard);
 copySafe.addEventListener('click', copySafeReply);
 voiceBtn.addEventListener('click', runVoiceInput);
+liveTurnBtn.addEventListener('click', runLiveVoiceTurn);
+stopSpeakBtn.addEventListener('click', stopSpeaking);
 
-async function runAnalysis() {
+async function runAnalysis({ speakReply = false } = {}) {
   try {
     const text = msg.value.trim();
     if (!text) {
@@ -25,7 +30,7 @@ async function runAnalysis() {
       return;
     }
 
-    setStatus('Analyzing with GPT-5.5…');
+    setStatus('Analyzing…');
     analyzeBtn.disabled = true;
 
     const res = await fetch('/api/analyze', {
@@ -44,7 +49,11 @@ async function runAnalysis() {
     latestAnalysis = data.analysis;
     renderAnalysis(latestAnalysis);
     cardBtn.disabled = false;
-    setStatus(`Done (${data.model}).`);
+    setStatus(`Done (${data.model}, ${data.mode || 'default'}).`);
+
+    if (speakReply) {
+      speakText(latestAnalysis?.send_safe_reply || 'I have a safe response option ready.');
+    }
   } catch (error) {
     setStatus(`Error: ${error.message}`);
   } finally {
@@ -94,7 +103,7 @@ async function generateCard() {
     }
 
     imageSection.classList.remove('hidden');
-    setStatus(`Card generated (${data.model}).`);
+    setStatus(`Card generated (${data.model}, ${data.mode || 'default'}).`);
   } catch (error) {
     setStatus(`Error: ${error.message}`);
   } finally {
@@ -110,29 +119,91 @@ async function copySafeReply() {
 }
 
 function runVoiceInput() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    setStatus('Voice input not supported in this browser.');
+  captureOneUtterance('Listening… speak now.')
+    .then((text) => {
+      msg.value = text;
+      setStatus('Voice captured.');
+    })
+    .catch((err) => setStatus(err.message));
+}
+
+async function runLiveVoiceTurn() {
+  try {
+    // Barge-in behavior: if assistant is speaking, user interrupts instantly.
+    if (speechSynthesis.speaking) {
+      speechSynthesis.cancel();
+      setStatus('Barge-in: assistant stopped. Listening for your update…');
+    }
+
+    liveTurnBtn.disabled = true;
+    const text = await captureOneUtterance('Live turn listening…');
+    msg.value = text;
+    setStatus('Live turn captured. Running analysis…');
+    await runAnalysis({ speakReply: true });
+  } catch (err) {
+    setStatus(err.message || 'Live turn failed.');
+  } finally {
+    liveTurnBtn.disabled = false;
+  }
+}
+
+function captureOneUtterance(listeningStatus = 'Listening…') {
+  return new Promise((resolve, reject) => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      reject(new Error('Voice input not supported in this browser.'));
+      return;
+    }
+
+    const rec = new SR();
+    rec.lang = 'en-US';
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+
+    setStatus(listeningStatus);
+    rec.start();
+
+    rec.onresult = (event) => {
+      const text = event.results?.[0]?.[0]?.transcript || '';
+      if (!text.trim()) {
+        reject(new Error('No speech recognized. Try again.'));
+        return;
+      }
+      resolve(text.trim());
+    };
+
+    rec.onerror = (event) => {
+      reject(new Error(`Voice error: ${event.error}`));
+    };
+  });
+}
+
+function stopSpeaking() {
+  if (speechSynthesis.speaking) {
+    speechSynthesis.cancel();
+    setStatus('Assistant voice stopped.');
+  } else {
+    setStatus('Assistant is not speaking.');
+  }
+}
+
+function speakText(text) {
+  const clean = String(text || '').trim();
+  if (!clean) return;
+
+  if (!('speechSynthesis' in window)) {
+    setStatus('Speech output not supported in this browser.');
     return;
   }
 
-  const rec = new SR();
-  rec.lang = 'en-US';
-  rec.interimResults = false;
-  rec.maxAlternatives = 1;
-
-  setStatus('Listening… speak now.');
-  rec.start();
-
-  rec.onresult = (event) => {
-    const text = event.results?.[0]?.[0]?.transcript || '';
-    msg.value = text;
-    setStatus('Voice captured.');
-  };
-
-  rec.onerror = (event) => {
-    setStatus(`Voice error: ${event.error}`);
-  };
+  speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(clean);
+  utterance.rate = 1.0;
+  utterance.pitch = 1.0;
+  utterance.onstart = () => setStatus('Assistant speaking… (you can barge in)');
+  utterance.onend = () => setStatus('Assistant done speaking.');
+  utterance.onerror = () => setStatus('Speech output error.');
+  speechSynthesis.speak(utterance);
 }
 
 function fillText(id, value) {

@@ -13,6 +13,11 @@ Paste (or speak) a stressful message and get:
 
 Then generate a shareable visual brief card with **Image Gen**.
 
+Also includes **Live Voice Turn (Barge-in)** mode:
+- Assistant speaks the safe reply
+- User can interrupt mid-speech and immediately capture a new turn
+- Re-analyzes instantly for updated coaching
+
 ## Why this is Blue View DNA
 - Calm under pressure
 - Human-first and relationship-protective

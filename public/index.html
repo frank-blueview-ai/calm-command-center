@@ -35,9 +35,12 @@
 
         <div class="row actions">
           <button id="voiceBtn" type="button">🎙️ Voice Input</button>
-          <button id="analyzeBtn" type="button">Analyze with GPT-5.5</button>
+          <button id="liveTurnBtn" type="button">🛰️ Live Voice Turn (Barge-in)</button>
+          <button id="analyzeBtn" type="button">Analyze</button>
           <button id="cardBtn" type="button" disabled>Generate Image Card</button>
+          <button id="stopSpeakBtn" type="button">⛔ Stop Assistant Voice</button>
         </div>
+        <label class="inline-check"><input id="autoSpeak" type="checkbox" checked /> Auto-speak send-safe reply</label>
         <p id="status" class="status">Ready.</p>
       </section>
 
