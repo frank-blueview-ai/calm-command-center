@@ -33,6 +33,14 @@
           </label>
         </div>
 
+        <div class="demo-panel">
+          <div>
+            <p class="mini-kicker">One-click demos</p>
+            <p class="hint">Load a judging-ready scenario, then analyze or run a benchmark.</p>
+          </div>
+          <div id="demoScenarios" class="scenario-buttons" aria-live="polite"></div>
+        </div>
+
         <div class="row actions">
           <button id="voiceBtn" type="button">🎙️ Voice Input</button>
           <button id="liveTurnBtn" type="button">🛰️ Live Voice Turn (Barge-in)</button>
@@ -42,6 +50,41 @@
         </div>
         <label class="inline-check"><input id="autoSpeak" type="checkbox" checked /> Auto-speak send-safe reply</label>
         <p id="status" class="status">Ready.</p>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <p class="mini-kicker">Latency dashboard</p>
+            <h2>Benchmark p50 / p95</h2>
+            <p class="hint">Run 20–30 sequential turns across demo scenarios to prove demo responsiveness.</p>
+          </div>
+          <div class="benchmark-controls">
+            <label>Turns
+              <select id="benchmarkTurns">
+                <option value="20">20 turns</option>
+                <option value="25">25 turns</option>
+                <option value="30">30 turns</option>
+              </select>
+            </label>
+            <button id="benchmarkBtn" type="button">Run Benchmark</button>
+          </div>
+        </div>
+        <div class="metric-grid" id="latencyMetrics">
+          <div><span>Turns</span><strong id="metricCount">0</strong></div>
+          <div><span>p50</span><strong id="metricP50">—</strong></div>
+          <div><span>p95</span><strong id="metricP95">—</strong></div>
+          <div><span>Max</span><strong id="metricMax">—</strong></div>
+        </div>
+        <div id="benchmarkDetails" class="benchmark-details hidden">
+          <h3>Benchmark runs</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Scenario</th><th>Backend</th><th>Latency</th><th>Status</th></tr></thead>
+              <tbody id="benchmarkRows"></tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
       <section id="result" class="card hidden">

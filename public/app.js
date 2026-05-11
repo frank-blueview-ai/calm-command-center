@@ -12,8 +12,15 @@ const result = document.getElementById('result');
 const imageSection = document.getElementById('imageSection');
 const cardImage = document.getElementById('cardImage');
 const copySafe = document.getElementById('copySafe');
+const demoScenariosEl = document.getElementById('demoScenarios');
+const benchmarkBtn = document.getElementById('benchmarkBtn');
+const benchmarkTurns = document.getElementById('benchmarkTurns');
+const benchmarkDetails = document.getElementById('benchmarkDetails');
+const benchmarkRows = document.getElementById('benchmarkRows');
 
 let latestAnalysis = null;
+let demoScenarios = [];
+let latencySamples = [];
 
 analyzeBtn.addEventListener('click', () => runAnalysis({ speakReply: autoSpeak.checked }));
 cardBtn.addEventListener('click', generateCard);
@@ -21,6 +28,115 @@ copySafe.addEventListener('click', copySafeReply);
 voiceBtn.addEventListener('click', runVoiceInput);
 liveTurnBtn.addEventListener('click', runLiveVoiceTurn);
 stopSpeakBtn.addEventListener('click', stopSpeaking);
+benchmarkBtn.addEventListener('click', runBenchmark);
+loadDemoScenarios();
+
+
+async function loadDemoScenarios() {
+  try {
+    const res = await fetch('/api/demo-scenarios');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load scenarios');
+    demoScenarios = data.scenarios || [];
+    renderDemoScenarios();
+  } catch (error) {
+    demoScenariosEl.textContent = `Demo scenarios unavailable: ${error.message}`;
+  }
+}
+
+function renderDemoScenarios() {
+  demoScenariosEl.innerHTML = '';
+  for (const scenario of demoScenarios) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'scenario-btn';
+    button.textContent = scenario.title;
+    button.addEventListener('click', () => loadScenario(scenario));
+    demoScenariosEl.appendChild(button);
+  }
+}
+
+function loadScenario(scenario) {
+  msg.value = scenario.message || '';
+  tone.value = scenario.tone || 'balanced';
+  goal.value = scenario.goal || 'Respond calmly and professionally while protecting the relationship.';
+  setStatus(`Loaded demo: ${scenario.title}.`);
+}
+
+async function runBenchmark() {
+  try {
+    benchmarkBtn.disabled = true;
+    benchmarkRows.innerHTML = '';
+    benchmarkDetails.classList.add('hidden');
+    setStatus(`Running ${benchmarkTurns.value}-turn benchmark…`);
+
+    const res = await fetch('/api/benchmark', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ turns: Number(benchmarkTurns.value), scenarios: demoScenarios })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Benchmark failed');
+
+    latencySamples = (data.rows || []).filter((row) => row.ok).map((row) => row.latencyMs);
+    updateLatencyMetrics(data.stats || summarizeLatencies(latencySamples));
+    renderBenchmarkRows(data.rows || []);
+    benchmarkDetails.classList.remove('hidden');
+    const p50 = formatMs(data.stats?.p50);
+    const p95 = formatMs(data.stats?.p95);
+    setStatus(`Benchmark complete: p50 ${p50}, p95 ${p95}, ${data.stats?.count || 0}/${data.completedTurns} successful turns.`);
+  } catch (error) {
+    setStatus(`Benchmark error: ${error.message}`);
+  } finally {
+    benchmarkBtn.disabled = false;
+  }
+}
+
+function renderBenchmarkRows(rows) {
+  benchmarkRows.innerHTML = '';
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${row.turn}</td>
+      <td>${escapeHtml(row.scenarioTitle || row.scenarioId || 'Scenario')}</td>
+      <td>${escapeHtml(row.backend || '—')}${row.fallbackUsed ? ' ↪ fallback' : ''}</td>
+      <td>${formatMs(row.latencyMs)}</td>
+      <td class="${row.ok ? 'ok' : 'fail'}">${row.ok ? 'ok' : escapeHtml(row.error || 'failed')}</td>
+    `;
+    benchmarkRows.appendChild(tr);
+  }
+}
+
+function updateLatencyMetrics(stats) {
+  fillText('metricCount', stats?.count ?? 0);
+  fillText('metricP50', formatMs(stats?.p50));
+  fillText('metricP95', formatMs(stats?.p95));
+  fillText('metricMax', formatMs(stats?.max));
+}
+
+function summarizeLatencies(samples) {
+  if (!samples.length) return { count: 0, p50: null, p95: null, max: null };
+  const sorted = [...samples].sort((a, b) => a - b);
+  return {
+    count: sorted.length,
+    p50: percentile(sorted, 50),
+    p95: percentile(sorted, 95),
+    max: sorted[sorted.length - 1]
+  };
+}
+
+function percentile(sorted, pct) {
+  const index = Math.ceil((pct / 100) * sorted.length) - 1;
+  return sorted[Math.min(sorted.length - 1, Math.max(0, index))];
+}
+
+function formatMs(value) {
+  return Number.isFinite(value) ? `${Math.round(value)}ms` : '—';
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 
 async function runAnalysis({ speakReply = false } = {}) {
   try {
@@ -49,6 +165,10 @@ async function runAnalysis({ speakReply = false } = {}) {
     latestAnalysis = data.analysis;
     renderAnalysis(latestAnalysis);
     cardBtn.disabled = false;
+    if (data.latencyMs) {
+      latencySamples.push(data.latencyMs);
+      updateLatencyMetrics(summarizeLatencies(latencySamples));
+    }
     const backend = data.backend || data.mode || 'default';
     const latency = data.latencyMs ? `, ${data.latencyMs}ms` : '';
     setStatus(`Done (${backend}${latency}, ${data.model || 'model-unknown'}).`);

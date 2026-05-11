@@ -26,6 +26,31 @@ const NEUTRINORTC_VOICE = process.env.NEUTRINORTC_VOICE || 'marin';
 const openai = USE_OPENAI_API ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 const turnBySession = new Map();
 
+const DEMO_SCENARIOS = [
+  {
+    id: 'missed-deadline',
+    title: 'Missed deadline escalation',
+    tone: 'balanced',
+    goal: 'Acknowledge the concern, reset expectations, and preserve trust.',
+    message: 'This is the third time the deliverable slipped. I am tired of excuses. If this is not fixed today I am escalating to leadership and asking for a new owner.'
+  },
+  {
+    id: 'customer-refund',
+    title: 'Angry customer refund',
+    tone: 'warm',
+    goal: 'Validate the frustration, avoid blame, and move toward a clear next step.',
+    message: 'Your team completely wasted my time. I paid for this and got nothing useful. Refund me now or I am posting screenshots everywhere.'
+  },
+  {
+    id: 'boundary-setting',
+    title: 'Boundary with teammate',
+    tone: 'firm',
+    goal: 'Set a respectful boundary while keeping collaboration possible.',
+    message: 'You keep dumping last-minute work on me and then acting like I am the blocker. I am not cleaning this up again unless you own your part.'
+  }
+];
+
+
 app.get('/healthz', async (_req, res) => {
   const rtcHealthy = ENABLE_NEUTRINORTC ? await checkRtcHealth() : false;
   res.json({
@@ -78,6 +103,77 @@ app.post('/api/analyze', async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Analysis failed.', detail: String(error?.message || error) });
+  }
+});
+
+
+app.get('/api/demo-scenarios', (_req, res) => {
+  res.json({ ok: true, scenarios: DEMO_SCENARIOS });
+});
+
+app.post('/api/benchmark', async (req, res) => {
+  const started = performance.now();
+  try {
+    const {
+      turns = 20,
+      backend,
+      userGoal = 'Respond calmly and professionally while protecting the relationship.',
+      tone = 'balanced',
+      scenarios = DEMO_SCENARIOS
+    } = req.body ?? {};
+
+    const totalTurns = Math.min(30, Math.max(1, Number.parseInt(turns, 10) || 20));
+    const sourceScenarios = normalizeBenchmarkScenarios(scenarios);
+    const selected = normalizeBackend(backend || DEFAULT_ANALYZE_BACKEND);
+    const rows = [];
+
+    for (let i = 0; i < totalTurns; i++) {
+      const scenario = sourceScenarios[i % sourceScenarios.length];
+      const turnStarted = performance.now();
+      try {
+        const result = await runAnalyzeWithFallback({
+          preferredBackend: selected,
+          message: scenario.message,
+          userGoal: scenario.goal || userGoal,
+          tone: scenario.tone || tone,
+          voiceSessionId: `benchmark-${Date.now()}-${i}`
+        });
+        rows.push({
+          turn: i + 1,
+          scenarioId: scenario.id,
+          scenarioTitle: scenario.title,
+          ok: true,
+          backend: result.backend,
+          model: result.model,
+          latencyMs: result.latencyMs || Math.round(performance.now() - turnStarted),
+          fallbackUsed: result.fallbackUsed || false,
+          metrics: result.metrics || null
+        });
+      } catch (error) {
+        rows.push({
+          turn: i + 1,
+          scenarioId: scenario.id,
+          scenarioTitle: scenario.title,
+          ok: false,
+          backend: selected,
+          latencyMs: Math.round(performance.now() - turnStarted),
+          error: String(error?.message || error)
+        });
+      }
+    }
+
+    const successfulLatencies = rows.filter((row) => row.ok).map((row) => row.latencyMs);
+    res.json({
+      ok: true,
+      requestedTurns: totalTurns,
+      completedTurns: rows.length,
+      totalElapsedMs: Math.round(performance.now() - started),
+      stats: summarizeLatencies(successfulLatencies),
+      rows
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Benchmark failed.', detail: String(error?.message || error) });
   }
 });
 
@@ -156,6 +252,46 @@ async function runAnalyzeWithFallback({ preferredBackend, message, userGoal, ton
   }
 
   throw lastError || new Error('No analysis backend available');
+}
+
+
+function normalizeBenchmarkScenarios(scenarios) {
+  const list = Array.isArray(scenarios) && scenarios.length ? scenarios : DEMO_SCENARIOS;
+  const normalized = list
+    .map((item, index) => ({
+      id: String(item?.id || `scenario-${index + 1}`),
+      title: String(item?.title || `Scenario ${index + 1}`),
+      tone: String(item?.tone || 'balanced'),
+      goal: String(item?.goal || 'Respond calmly and professionally.'),
+      message: String(item?.message || '').trim()
+    }))
+    .filter((item) => item.message)
+    .slice(0, 10);
+
+  return normalized.length ? normalized : DEMO_SCENARIOS;
+}
+
+function summarizeLatencies(latencies) {
+  if (!latencies.length) {
+    return { count: 0, p50: null, p95: null, max: null, min: null, avg: null };
+  }
+
+  const sorted = [...latencies].sort((a, b) => a - b);
+  const sum = sorted.reduce((acc, value) => acc + value, 0);
+  return {
+    count: sorted.length,
+    p50: percentile(sorted, 50),
+    p95: percentile(sorted, 95),
+    max: sorted[sorted.length - 1],
+    min: sorted[0],
+    avg: Math.round(sum / sorted.length)
+  };
+}
+
+function percentile(sortedLatencies, pct) {
+  if (!sortedLatencies.length) return null;
+  const index = Math.ceil((pct / 100) * sortedLatencies.length) - 1;
+  return sortedLatencies[Math.min(sortedLatencies.length - 1, Math.max(0, index))];
 }
 
 function backendOrder(preferred) {
