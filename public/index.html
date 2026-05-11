@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Calm Command Center • Blue View DNA</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header>
+        <p class="kicker">NeutrinoRTC Showcase</p>
+        <h1>Calm Command Center</h1>
+        <p class="sub">Turn heated messages into clear, safe, and human responses.</p>
+      </header>
+
+      <section class="card">
+        <label for="msg">Incoming message</label>
+        <textarea id="msg" rows="7" placeholder="Paste the stressful message here..."></textarea>
+
+        <div class="row">
+          <label>Tone
+            <select id="tone">
+              <option value="balanced">Balanced</option>
+              <option value="warm">Warm</option>
+              <option value="firm">Firm</option>
+              <option value="executive">Executive</option>
+            </select>
+          </label>
+
+          <label>Goal
+            <input id="goal" value="Respond calmly and professionally while protecting the relationship." />
+          </label>
+        </div>
+
+        <div class="row actions">
+          <button id="voiceBtn" type="button">🎙️ Voice Input</button>
+          <button id="analyzeBtn" type="button">Analyze with GPT-5.5</button>
+          <button id="cardBtn" type="button" disabled>Generate Image Card</button>
+        </div>
+        <p id="status" class="status">Ready.</p>
+      </section>
+
+      <section id="result" class="card hidden">
+        <h2>De-escalation Analysis</h2>
+        <div class="grid">
+          <div>
+            <h3>Neutral Summary</h3>
+            <p id="neutral"></p>
+          </div>
+          <div>
+            <h3>Emotional Temperature</h3>
+            <p id="heat"></p>
+          </div>
+        </div>
+
+        <div class="grid three">
+          <div>
+            <h3>Facts</h3>
+            <ul id="facts"></ul>
+          </div>
+          <div>
+            <h3>Assumptions</h3>
+            <ul id="assumptions"></ul>
+          </div>
+          <div>
+            <h3>Risks</h3>
+            <ul id="risks"></ul>
+          </div>
+        </div>
+
+        <div class="grid three">
+          <article>
+            <h3>Calm Short</h3>
+            <p id="calm_short"></p>
+          </article>
+          <article>
+            <h3>Collaborative</h3>
+            <p id="collaborative"></p>
+          </article>
+          <article>
+            <h3>Firm Respectful</h3>
+            <p id="firm_respectful"></p>
+          </article>
+        </div>
+
+        <h3>Send-Safe Reply</h3>
+        <p id="send_safe_reply" class="safe"></p>
+        <button id="copySafe" type="button">Copy Send-Safe Reply</button>
+      </section>
+
+      <section id="imageSection" class="card hidden">
+        <h2>Image Gen Brief Card</h2>
+        <img id="cardImage" alt="Generated communication brief" />
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

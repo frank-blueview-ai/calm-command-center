@@ -1,0 +1,73 @@
+:root {
+  --bg: #07111f;
+  --panel: #0d1d33;
+  --panel-soft: #112746;
+  --text: #e6f0ff;
+  --muted: #98b3d8;
+  --accent: #56d5ff;
+  --good: #74f0c2;
+  --warn: #ffd16a;
+  --bad: #ff8a8a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: radial-gradient(circle at top, #102947 0%, var(--bg) 55%);
+  color: var(--text);
+}
+.wrap { max-width: 1100px; margin: 0 auto; padding: 2rem 1rem 4rem; }
+.kicker {
+  margin: 0;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+h1 { margin: 0.4rem 0; font-size: 2.2rem; }
+.sub { margin-top: 0; color: var(--muted); }
+.card {
+  background: linear-gradient(180deg, var(--panel), var(--panel-soft));
+  border: 1px solid #25466f;
+  border-radius: 16px;
+  padding: 1rem;
+  margin-top: 1rem;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+}
+label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
+textarea, input, select {
+  width: 100%;
+  border: 1px solid #2f5d92;
+  background: #081527;
+  color: var(--text);
+  border-radius: 10px;
+  padding: 0.65rem;
+}
+.row { display: grid; grid-template-columns: 1fr 2fr; gap: 0.8rem; margin-top: 0.8rem; }
+.actions { grid-template-columns: repeat(3, minmax(160px, 1fr)); }
+button {
+  border: 1px solid #3d7fbc;
+  background: #123054;
+  color: var(--text);
+  border-radius: 10px;
+  padding: 0.65rem 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+.status { color: var(--muted); min-height: 1.4rem; margin-bottom: 0; }
+.hidden { display: none; }
+.grid { display: grid; gap: 0.8rem; grid-template-columns: 1fr 1fr; }
+.grid.three { grid-template-columns: repeat(3, 1fr); }
+ul { margin: 0; padding-left: 1rem; }
+.safe {
+  border-left: 4px solid var(--good);
+  padding-left: 0.6rem;
+  background: rgba(116, 240, 194, 0.08);
+  border-radius: 8px;
+}
+#cardImage { width: 100%; max-width: 700px; border-radius: 12px; border: 1px solid #355f92; }
+@media (max-width: 820px) {
+  .row, .grid, .grid.three, .actions { grid-template-columns: 1fr; }
+}
