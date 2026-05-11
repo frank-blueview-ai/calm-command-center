@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { performance } from 'node:perf_hooks';
 import OpenAI from 'openai';
 
 const execFileAsync = promisify(execFile);
@@ -13,17 +14,30 @@ app.use(express.static('public'));
 const PORT = Number(process.env.PORT || 8790);
 const TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || 'gpt-5.5';
 const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
+
 const USE_OPENAI_API = Boolean(process.env.OPENAI_API_KEY);
+const ENABLE_NEUTRINORTC = String(process.env.ENABLE_NEUTRINORTC ?? 'true') !== 'false';
+const DEFAULT_ANALYZE_BACKEND = process.env.ANALYZE_BACKEND || (ENABLE_NEUTRINORTC ? 'neutrinortc' : (USE_OPENAI_API ? 'openai-api' : 'openclaw-agent'));
 
-const openai = USE_OPENAI_API
-  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  : null;
+const NEUTRINORTC_URL = process.env.NEUTRINORTC_URL || 'http://127.0.0.1:8788/v1/brain/turn';
+const NEUTRINORTC_HEALTH_URL = process.env.NEUTRINORTC_HEALTH_URL || 'http://127.0.0.1:8788/healthz';
+const NEUTRINORTC_VOICE = process.env.NEUTRINORTC_VOICE || 'marin';
 
-app.get('/healthz', (_req, res) => {
+const openai = USE_OPENAI_API ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+const turnBySession = new Map();
+
+app.get('/healthz', async (_req, res) => {
+  const rtcHealthy = ENABLE_NEUTRINORTC ? await checkRtcHealth() : false;
   res.json({
     ok: true,
     service: 'calm-command-center',
-    mode: USE_OPENAI_API ? 'openai-api' : 'codex-login-via-openclaw',
+    defaultAnalyzeBackend: DEFAULT_ANALYZE_BACKEND,
+    availableBackends: {
+      neutrinoRtc: rtcHealthy,
+      openaiApi: USE_OPENAI_API,
+      openclawAgent: true
+    },
+    mode: USE_OPENAI_API ? 'openai-api-enabled' : 'codex-login-via-openclaw',
     model: USE_OPENAI_API ? TEXT_MODEL : 'openai-codex/* (gateway default)',
     imageModel: USE_OPENAI_API ? IMAGE_MODEL : 'tool-assisted/fallback'
   });
@@ -31,18 +45,36 @@ app.get('/healthz', (_req, res) => {
 
 app.post('/api/analyze', async (req, res) => {
   try {
-    const { message, userGoal = 'Respond calmly and professionally.', tone = 'balanced' } = req.body ?? {};
+    const {
+      message,
+      userGoal = 'Respond calmly and professionally.',
+      tone = 'balanced',
+      backend,
+      voiceSessionId
+    } = req.body ?? {};
+
     if (!message || !String(message).trim()) {
       return res.status(400).json({ error: 'message is required.' });
     }
 
-    if (USE_OPENAI_API) {
-      const analysis = await analyzeWithOpenAI({ message, userGoal, tone });
-      return res.json({ ok: true, analysis, model: TEXT_MODEL, mode: 'openai-api' });
-    }
+    const selected = normalizeBackend(backend || DEFAULT_ANALYZE_BACKEND);
+    const result = await runAnalyzeWithFallback({
+      preferredBackend: selected,
+      message,
+      userGoal,
+      tone,
+      voiceSessionId
+    });
 
-    const analysis = await analyzeWithOpenClawAgent({ message, userGoal, tone });
-    return res.json({ ok: true, analysis: analysis.data, model: analysis.model, mode: 'codex-login-via-openclaw' });
+    return res.json({
+      ok: true,
+      analysis: result.data,
+      backend: result.backend,
+      model: result.model,
+      latencyMs: result.latencyMs,
+      metrics: result.metrics || null,
+      fallbackUsed: result.fallbackUsed || false
+    });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Analysis failed.', detail: String(error?.message || error) });
@@ -70,13 +102,11 @@ app.post('/api/card', async (req, res) => {
       });
     }
 
-    // Codex-login mode: try tool-assisted generation through OpenClaw agent first.
     const toolImage = await tryToolImageViaOpenClaw(analysis, brand);
     if (toolImage?.imageUrl || toolImage?.imageBase64) {
-      return res.json({ ok: true, ...toolImage, mode: 'codex-login-via-openclaw' });
+      return res.json({ ok: true, ...toolImage, mode: 'openclaw-agent-image-tool' });
     }
 
-    // Fallback: local SVG card (always works with no API keys)
     const svg = generateSvgCard(analysis);
     const imageBase64 = Buffer.from(svg, 'utf8').toString('base64');
     return res.json({
@@ -84,7 +114,7 @@ app.post('/api/card', async (req, res) => {
       imageBase64,
       mimeType: 'image/svg+xml',
       model: 'local-svg-fallback',
-      mode: 'codex-login-via-openclaw'
+      mode: 'local-fallback'
     });
   } catch (error) {
     console.error(error);
@@ -94,10 +124,107 @@ app.post('/api/card', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Calm Command Center listening on http://localhost:${PORT}`);
-  console.log(`Mode: ${USE_OPENAI_API ? 'OPENAI_API_KEY (GPT-5.5 + gpt-image-1)' : 'Codex login via OpenClaw gateway'}`);
+  console.log(`Default analysis backend: ${DEFAULT_ANALYZE_BACKEND}`);
+  console.log(`OpenAI API mode: ${USE_OPENAI_API ? 'enabled' : 'disabled'}`);
+  console.log(`NeutrinoRTC mode: ${ENABLE_NEUTRINORTC ? 'enabled' : 'disabled'} (${NEUTRINORTC_URL})`);
 });
 
+async function runAnalyzeWithFallback({ preferredBackend, message, userGoal, tone, voiceSessionId }) {
+  const ordered = backendOrder(preferredBackend);
+  let lastError = null;
+
+  for (let i = 0; i < ordered.length; i++) {
+    const b = ordered[i];
+    try {
+      if (b === 'neutrinortc' && ENABLE_NEUTRINORTC) {
+        const rtc = await analyzeWithNeutrinoRTC({ message, userGoal, tone, voiceSessionId });
+        return { ...rtc, fallbackUsed: i > 0 };
+      }
+
+      if (b === 'openai-api' && USE_OPENAI_API) {
+        const api = await analyzeWithOpenAI({ message, userGoal, tone });
+        return { ...api, fallbackUsed: i > 0 };
+      }
+
+      if (b === 'openclaw-agent') {
+        const agent = await analyzeWithOpenClawAgent({ message, userGoal, tone });
+        return { ...agent, fallbackUsed: i > 0 };
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('No analysis backend available');
+}
+
+function backendOrder(preferred) {
+  const p = normalizeBackend(preferred);
+  if (p === 'neutrinortc') return ['neutrinortc', 'openclaw-agent', 'openai-api'];
+  if (p === 'openai-api') return ['openai-api', 'neutrinortc', 'openclaw-agent'];
+  return ['openclaw-agent', 'neutrinortc', 'openai-api'];
+}
+
+function normalizeBackend(v) {
+  const x = String(v || '').toLowerCase();
+  if (x.includes('rtc') || x.includes('neutrino')) return 'neutrinortc';
+  if (x.includes('openai')) return 'openai-api';
+  return 'openclaw-agent';
+}
+
+async function analyzeWithNeutrinoRTC({ message, userGoal, tone, voiceSessionId }) {
+  const started = performance.now();
+  const sessionId = String(voiceSessionId || 'calm-command-center');
+  const turn = (turnBySession.get(sessionId) || 0) + 1;
+  turnBySession.set(sessionId, turn);
+
+  const prompt = [
+    'You are Calm Command Center in Blue View DNA mode.',
+    'Return ONLY strict JSON and no markdown.',
+    buildAnalysisPrompt({ message, userGoal, tone })
+  ].join('\n\n');
+
+  const payload = {
+    voiceSessionId: sessionId,
+    turnNumber: turn,
+    transcript: prompt,
+    voice: NEUTRINORTC_VOICE
+  };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort('neutrinortc timeout'), 60000);
+
+  try {
+    const resp = await fetch(NEUTRINORTC_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+
+    const json = await resp.json();
+    if (!resp.ok || json?.status !== 'ok') {
+      throw new Error(`NeutrinoRTC error: ${json?.error || resp.statusText}`);
+    }
+
+    const raw = String(json?.answerText || '{}');
+    const parsed = safeJsonParse(raw);
+    const totalMs = json?.metrics?.totalMs || Math.round(performance.now() - started);
+
+    return {
+      backend: 'neutrinortc',
+      model: 'neutrinortc/openclaw-cli',
+      data: parsed,
+      latencyMs: totalMs,
+      metrics: json?.metrics || null
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function analyzeWithOpenAI({ message, userGoal, tone }) {
+  const started = performance.now();
   const system = [
     'You are Neutrino Blueview for Calm Command Center.',
     'Mission: de-escalate, protect relationships, and produce safe clear responses.',
@@ -109,7 +236,6 @@ async function analyzeWithOpenAI({ message, userGoal, tone }) {
   ].join(' ');
 
   const user = buildAnalysisPrompt({ message, userGoal, tone });
-
   const completion = await openai.chat.completions.create({
     model: TEXT_MODEL,
     messages: [
@@ -119,10 +245,17 @@ async function analyzeWithOpenAI({ message, userGoal, tone }) {
   });
 
   const raw = completion.choices?.[0]?.message?.content || '{}';
-  return safeJsonParse(raw);
+  return {
+    backend: 'openai-api',
+    model: TEXT_MODEL,
+    data: safeJsonParse(raw),
+    latencyMs: Math.round(performance.now() - started),
+    metrics: null
+  };
 }
 
 async function analyzeWithOpenClawAgent({ message, userGoal, tone }) {
+  const started = performance.now();
   const prompt = [
     'You are Calm Command Center in Blue View DNA mode.',
     'Respond ONLY with strict JSON. No markdown.',
@@ -132,8 +265,11 @@ async function analyzeWithOpenClawAgent({ message, userGoal, tone }) {
   const run = await runOpenClawAgent(prompt, 'calm-command-center-analysis');
   const raw = run?.payloadText || '{}';
   return {
+    backend: 'openclaw-agent',
+    model: run?.model || 'openai-codex',
     data: safeJsonParse(raw),
-    model: run?.model || 'openai-codex'
+    latencyMs: Math.round(performance.now() - started),
+    metrics: null
   };
 }
 
@@ -180,6 +316,15 @@ async function runOpenClawAgent(message, sessionId) {
     mediaUrl: payload.mediaUrl || null,
     model
   };
+}
+
+async function checkRtcHealth() {
+  try {
+    const r = await fetch(NEUTRINORTC_HEALTH_URL, { method: 'GET' });
+    return r.ok;
+  } catch {
+    return false;
+  }
 }
 
 function buildAnalysisPrompt({ message, userGoal, tone }) {

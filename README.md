@@ -18,6 +18,13 @@ Also includes **Live Voice Turn (Barge-in)** mode:
 - User can interrupt mid-speech and immediately capture a new turn
 - Re-analyzes instantly for updated coaching
 
+And now supports **real NeutrinoRTC brain path** for analysis (with fallback):
+- Preferred: `neutrinortc` (`/v1/brain/turn`)
+- Fallback: `openclaw-agent`
+- Optional: `openai-api`
+
+The UI status line shows backend + latency per turn for direct comparison.
+
 ## Why this is Blue View DNA
 - Calm under pressure
 - Human-first and relationship-protective
@@ -43,8 +50,18 @@ Open: `http://localhost:8790`
 ### Mode A — Codex login mode (no API key)
 Use this when you rely on your existing OpenClaw/Codex login.
 - Leave `OPENAI_API_KEY` empty.
-- App routes analysis through `openclaw agent` (gateway model/auth).
+- Analysis defaults to `ANALYZE_BACKEND=neutrinortc` (real NeutrinoRTC brain path).
+- Falls back to `openclaw-agent` if NeutrinoRTC is unavailable.
 - Image card generation tries tool-assisted image generation and falls back to a local SVG brief card.
+
+Recommended `.env` for NeutrinoRTC latency testing:
+```env
+ANALYZE_BACKEND=neutrinortc
+ENABLE_NEUTRINORTC=true
+NEUTRINORTC_URL=http://127.0.0.1:8788/v1/brain/turn
+NEUTRINORTC_HEALTH_URL=http://127.0.0.1:8788/healthz
+NEUTRINORTC_VOICE=marin
+```
 
 ### Mode B — OpenAI API mode (full GPT-5.5 + gpt-image-1 showcase)
 Set API key in `.env`:

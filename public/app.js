@@ -49,7 +49,9 @@ async function runAnalysis({ speakReply = false } = {}) {
     latestAnalysis = data.analysis;
     renderAnalysis(latestAnalysis);
     cardBtn.disabled = false;
-    setStatus(`Done (${data.model}, ${data.mode || 'default'}).`);
+    const backend = data.backend || data.mode || 'default';
+    const latency = data.latencyMs ? `, ${data.latencyMs}ms` : '';
+    setStatus(`Done (${backend}${latency}, ${data.model || 'model-unknown'}).`);
 
     if (speakReply) {
       speakText(latestAnalysis?.send_safe_reply || 'I have a safe response option ready.');
