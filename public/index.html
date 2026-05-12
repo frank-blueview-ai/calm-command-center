@@ -23,8 +23,10 @@
             <select id="tone">
               <option value="balanced">Balanced</option>
               <option value="warm">Warm</option>
-              <option value="firm">Firm</option>
+              <option value="direct">Direct</option>
               <option value="executive">Executive</option>
+              <option value="repair">Repair-mode</option>
+              <option value="firm">Firm boundary</option>
             </select>
           </label>
 
@@ -36,11 +38,19 @@
         <div class="row actions">
           <button id="voiceBtn" type="button">🎙️ Voice Input</button>
           <button id="liveTurnBtn" type="button">🛰️ Live Voice Turn (Barge-in)</button>
+          <button id="realtimeStartBtn" type="button">🔊 Start OpenAI Live Voice</button>
+          <button id="realtimeStopBtn" type="button" disabled>Stop Live Voice</button>
           <button id="analyzeBtn" type="button">Analyze</button>
           <button id="cardBtn" type="button" disabled>Generate Image Card</button>
           <button id="stopSpeakBtn" type="button">⛔ Stop Assistant Voice</button>
         </div>
         <label class="inline-check"><input id="autoSpeak" type="checkbox" checked /> Auto-speak send-safe reply</label>
+        <div id="realtimePanel" class="realtime-panel hidden">
+          <strong>OpenAI Live Voice</strong>
+          <span id="realtimeState">Disconnected</span>
+          <p id="realtimeTranscript">Start a session and talk naturally. The assistant will respond in realtime audio.</p>
+          <audio id="realtimeAudio" autoplay></audio>
+        </div>
         <p id="status" class="status">Ready.</p>
       </section>
 
@@ -85,6 +95,16 @@
             <h3>Firm Respectful</h3>
             <p id="firm_respectful"></p>
           </article>
+        </div>
+
+        <div class="human-layer">
+          <h3>Human Layer</h3>
+          <div class="chips">
+            <span id="human_opener"></span>
+            <span id="relationship_cue"></span>
+            <span id="tone_mode"></span>
+          </div>
+          <ul id="rewrite_notes"></ul>
         </div>
 
         <h3>Send-Safe Reply</h3>

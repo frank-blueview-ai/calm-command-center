@@ -9,12 +9,14 @@ Paste (or speak) a stressful message and get:
 - Facts vs assumptions
 - Risks
 - 3 reply styles (calm short, collaborative, firm respectful)
-- One **send-safe** final reply
+- A **Human Layer** that adds natural empathy, context acknowledgment, relationship-aware cues, and micro-variation
+- One **send-safe** final reply that goes through a “say it like a person” rewrite pass
 
 Then generate a shareable visual brief card with **Image Gen**.
 
-Also includes **Live Voice Turn (Barge-in)** mode:
-- Assistant speaks the safe reply
+Also includes two voice paths:
+- **OpenAI Live Voice**: true realtime speech-to-speech conversation over WebRTC when `OPENAI_API_KEY` is set
+- **Live Voice Turn (Barge-in)** fallback: browser speech capture + analysis + speech synthesis
 - User can interrupt mid-speech and immediately capture a new turn
 - Re-analyzes instantly for updated coaching
 
@@ -29,6 +31,7 @@ The UI status line shows backend + latency per turn for direct comparison.
 - Calm under pressure
 - Human-first and relationship-protective
 - Fact/assumption separation before action
+- Human texture over policy-text phrasing
 - Ethical de-escalation over reactive escalation
 
 ## Tech
@@ -36,7 +39,8 @@ The UI status line shows backend + latency per turn for direct comparison.
 - Dual runtime modes:
   - **OpenAI API mode**: GPT-5.5 + gpt-image-1
   - **Codex login mode (no API key)**: uses `openclaw agent` via your existing Codex/Gateway auth
-- Web Speech API for quick voice capture in browser
+- OpenAI Realtime API over WebRTC for live speech-to-speech conversations
+- Web Speech API for quick voice capture fallback in browser
 
 ## Quick start
 ```bash
@@ -69,7 +73,11 @@ Set API key in `.env`:
 OPENAI_API_KEY=...
 OPENAI_TEXT_MODEL=gpt-5.5
 OPENAI_IMAGE_MODEL=gpt-image-1
+OPENAI_REALTIME_MODEL=gpt-realtime
+OPENAI_REALTIME_VOICE=marin
 ```
+
+With those variables set, click **Start OpenAI Live Voice** in the UI. The browser sends a WebRTC SDP offer to `POST /api/realtime/session`; the server attaches the realtime session config and forwards it to OpenAI so your API key never reaches the browser.
 
 ## API
 ### `POST /api/analyze`
@@ -78,9 +86,14 @@ Body:
 {
   "message": "text",
   "userGoal": "Respond calmly and professionally.",
-  "tone": "balanced"
+  "tone": "warm|direct|executive|repair|firm|balanced"
 }
 ```
+
+### `POST /api/realtime/session`
+Body: raw WebRTC SDP offer with `Content-Type: application/sdp`.
+
+Returns: raw WebRTC SDP answer from OpenAI. Requires `OPENAI_API_KEY`.
 
 ### `POST /api/card`
 Body:

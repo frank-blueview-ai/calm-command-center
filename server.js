@@ -8,12 +8,15 @@ import OpenAI from 'openai';
 const execFileAsync = promisify(execFile);
 
 const app = express();
+app.use(express.text({ type: ['application/sdp', 'text/plain'], limit: '1mb' }));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static('public'));
 
 const PORT = Number(process.env.PORT || 8790);
 const TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || 'gpt-5.5';
 const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
+const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
+const REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || 'marin';
 
 const USE_OPENAI_API = Boolean(process.env.OPENAI_API_KEY);
 const ENABLE_NEUTRINORTC = String(process.env.ENABLE_NEUTRINORTC ?? 'true') !== 'false';
@@ -39,7 +42,9 @@ app.get('/healthz', async (_req, res) => {
     },
     mode: USE_OPENAI_API ? 'openai-api-enabled' : 'codex-login-via-openclaw',
     model: USE_OPENAI_API ? TEXT_MODEL : 'openai-codex/* (gateway default)',
-    imageModel: USE_OPENAI_API ? IMAGE_MODEL : 'tool-assisted/fallback'
+    imageModel: USE_OPENAI_API ? IMAGE_MODEL : 'tool-assisted/fallback',
+    realtimeModel: USE_OPENAI_API ? REALTIME_MODEL : null,
+    realtimeVoice: USE_OPENAI_API ? REALTIME_VOICE : null
   });
 });
 
@@ -78,6 +83,43 @@ app.post('/api/analyze', async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Analysis failed.', detail: String(error?.message || error) });
+  }
+});
+
+
+app.post('/api/realtime/session', async (req, res) => {
+  try {
+    if (!USE_OPENAI_API) {
+      return res.status(400).json({ error: 'OPENAI_API_KEY is required for OpenAI live voice.' });
+    }
+
+    const sdp = String(req.body || '').trim();
+    if (!sdp || !sdp.startsWith('v=')) {
+      return res.status(400).json({ error: 'WebRTC SDP offer is required.' });
+    }
+
+    const sessionConfig = buildRealtimeSessionConfig(req.query || {});
+    const fd = new FormData();
+    fd.set('sdp', sdp);
+    fd.set('session', JSON.stringify(sessionConfig));
+
+    const response = await fetch('https://api.openai.com/v1/realtime/calls', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: fd
+    });
+
+    const answerSdp = await response.text();
+    if (!response.ok) {
+      return res.status(response.status).type('text/plain').send(answerSdp || response.statusText);
+    }
+
+    return res.type('application/sdp').send(answerSdp);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Realtime session failed.', detail: String(error?.message || error) });
   }
 });
 
@@ -129,6 +171,34 @@ app.listen(PORT, () => {
   console.log(`NeutrinoRTC mode: ${ENABLE_NEUTRINORTC ? 'enabled' : 'disabled'} (${NEUTRINORTC_URL})`);
 });
 
+
+function buildRealtimeSessionConfig({ tone = 'balanced', goal = 'Respond calmly while protecting trust.' } = {}) {
+  return {
+    type: 'realtime',
+    model: REALTIME_MODEL,
+    instructions: buildRealtimeInstructions({ tone, goal }),
+    audio: {
+      output: {
+        voice: REALTIME_VOICE
+      }
+    }
+  };
+}
+
+function buildRealtimeInstructions({ tone, goal }) {
+  return [
+    'You are Calm Command Center in OpenAI Realtime live voice mode.',
+    'Have a natural speech-to-speech conversation, not a form-filling interview.',
+    'Use the Human Layer: short natural empathy, context acknowledgment, relationship-aware wording, and small variation.',
+    'Help the user de-escalate stressful messages in real time. Separate facts from assumptions before suggesting wording.',
+    `User goal: ${String(goal || '').trim()}`,
+    `Tone mode: ${String(tone || '').trim()}`,
+    'When the user asks what to send, give one concise send-safe reply that sounds like a person.',
+    'If the situation calls for a boundary, be firm without shaming or escalating.',
+    'Do not claim to have taken actions outside the conversation.'
+  ].join('\n');
+}
+
 async function runAnalyzeWithFallback({ preferredBackend, message, userGoal, tone, voiceSessionId }) {
   const ordered = backendOrder(preferredBackend);
   let lastError = null;
@@ -138,17 +208,17 @@ async function runAnalyzeWithFallback({ preferredBackend, message, userGoal, ton
     try {
       if (b === 'neutrinortc' && ENABLE_NEUTRINORTC) {
         const rtc = await analyzeWithNeutrinoRTC({ message, userGoal, tone, voiceSessionId });
-        return { ...rtc, fallbackUsed: i > 0 };
+        return withHumanLayer({ ...rtc, fallbackUsed: i > 0 }, { message, userGoal, tone });
       }
 
       if (b === 'openai-api' && USE_OPENAI_API) {
         const api = await analyzeWithOpenAI({ message, userGoal, tone });
-        return { ...api, fallbackUsed: i > 0 };
+        return withHumanLayer({ ...api, fallbackUsed: i > 0 }, { message, userGoal, tone });
       }
 
       if (b === 'openclaw-agent') {
         const agent = await analyzeWithOpenClawAgent({ message, userGoal, tone });
-        return { ...agent, fallbackUsed: i > 0 };
+        return withHumanLayer({ ...agent, fallbackUsed: i > 0 }, { message, userGoal, tone });
       }
     } catch (err) {
       lastError = err;
@@ -232,7 +302,8 @@ async function analyzeWithOpenAI({ message, userGoal, tone }) {
     'No markdown. No extra text.',
     'If hostile content exists, lower heat and keep reply firm + respectful.',
     'Separate fact from assumption before advising.',
-    'Keep suggestions practical and brief.'
+    'Keep suggestions practical and brief.',
+    'Apply the Human Layer: natural empathy, context acknowledgment, relationship-aware wording, and non-corporate phrasing.'
   ].join(' ');
 
   const user = buildAnalysisPrompt({ message, userGoal, tone });
@@ -333,6 +404,14 @@ function buildAnalysisPrompt({ message, userGoal, tone }) {
     `USER_GOAL: ${String(userGoal).trim()}`,
     `PREFERRED_TONE: ${String(tone).trim()}`,
     '',
+    'HUMAN_LAYER_RULES:',
+    '- The final reply must sound like a person, not policy copy or a corporate template.',
+    '- Open with one short, natural acknowledgment when appropriate; vary sentence shape across turns.',
+    '- Acknowledge the context without over-apologizing or admitting facts not in evidence.',
+    '- Choose wording based on the relationship goal: protect trust, set a boundary, or de-escalate.',
+    '- Tone modes: warm = gentle and validating; direct = plain and concise; executive = crisp and composed; repair = accountable and trust-restoring; firm = respectful boundary.',
+    '- Preserve safety, facts, and boundaries while removing stiff phrases like "per my previous message" or "we value your feedback".',
+    '',
     'Return JSON with this exact shape:',
     '{',
     '  "neutral_summary": "string",',
@@ -346,9 +425,138 @@ function buildAnalysisPrompt({ message, userGoal, tone }) {
     '    "firm_respectful": "string"',
     '  },',
     '  "send_safe_reply": "string",',
+    '  "human_layer": {',
+    '    "natural_opener": "string",',
+    '    "relationship_cue": "protect_trust|set_boundary|de_escalate",',
+    '    "tone_mode": "warm|direct|executive|repair|balanced|firm",',
+    '    "rewrite_notes": ["string"]',
+    '  },',
     '  "coach_note": "string"',
     '}'
   ].join('\n');
+}
+
+function withHumanLayer(result, context) {
+  return {
+    ...result,
+    data: applyHumanLayer(result.data, context)
+  };
+}
+
+function applyHumanLayer(data, { message, userGoal, tone }) {
+  const safe = data && typeof data === 'object' ? data : fallback('');
+  const toneMode = normalizeToneMode(tone);
+  const relationshipCue = detectRelationshipCue(userGoal, message);
+  const naturalOpener = pickNaturalOpener({ message, toneMode, relationshipCue });
+
+  const replyOptions = safe.reply_options && typeof safe.reply_options === 'object'
+    ? safe.reply_options
+    : {};
+
+  const rewrittenSafeReply = humanizeReply({
+    text: safe.send_safe_reply || replyOptions.collaborative || replyOptions.calm_short || '',
+    opener: safe.human_layer?.natural_opener || naturalOpener,
+    toneMode,
+    relationshipCue
+  });
+
+  return {
+    ...safe,
+    reply_options: {
+      calm_short: humanizeReply({ text: replyOptions.calm_short, opener: naturalOpener, toneMode, relationshipCue, maxSentences: 2 }),
+      collaborative: humanizeReply({ text: replyOptions.collaborative, opener: naturalOpener, toneMode: toneMode === 'firm' ? 'direct' : toneMode, relationshipCue }),
+      firm_respectful: humanizeReply({ text: replyOptions.firm_respectful, opener: 'I want to be clear.', toneMode: 'firm', relationshipCue: 'set_boundary' })
+    },
+    send_safe_reply: rewrittenSafeReply,
+    human_layer: {
+      natural_opener: naturalOpener,
+      relationship_cue: relationshipCue,
+      tone_mode: toneMode,
+      rewrite_notes: [
+        'Added a natural acknowledgment before advice.',
+        'Kept the boundary/facts intact while removing stiff corporate phrasing.',
+        'Varied sentence shape so the reply reads like speech.'
+      ]
+    }
+  };
+}
+
+function normalizeToneMode(tone) {
+  const t = String(tone || '').toLowerCase();
+  if (t.includes('repair')) return 'repair';
+  if (t.includes('executive')) return 'executive';
+  if (t.includes('direct')) return 'direct';
+  if (t.includes('warm')) return 'warm';
+  if (t.includes('firm')) return 'firm';
+  return 'balanced';
+}
+
+function detectRelationshipCue(userGoal, message) {
+  const text = `${userGoal || ''} ${message || ''}`.toLowerCase();
+  if (/(boundary|firm|unacceptable|cannot|won't|will not|limit)/.test(text)) return 'set_boundary';
+  if (/(trust|relationship|client|partner|repair|apolog|own|accountable)/.test(text)) return 'protect_trust';
+  return 'de_escalate';
+}
+
+function pickNaturalOpener({ message, toneMode, relationshipCue }) {
+  const bank = {
+    warm: ['I hear you.', 'That sounds frustrating.', 'Thanks for saying it directly.'],
+    direct: ['I hear you.', 'Understood.', 'Thanks for being direct.'],
+    executive: ['Understood.', 'I see the concern.', 'Thanks for flagging this.'],
+    repair: ['You’re right to raise this.', 'I hear you, and I’m sorry this landed that way.', 'Thanks for calling this out.'],
+    firm: ['I hear the concern.', 'I want to be clear.', 'I understand this matters.'],
+    balanced: ['I hear you.', 'Thanks for saying it directly.', 'I understand this is frustrating.']
+  };
+  const cueOpener = relationshipCue === 'set_boundary' ? 'I want to be clear.' : null;
+  const choices = bank[toneMode] || bank.balanced;
+  if (cueOpener && toneMode === 'firm') return cueOpener;
+  return choices[stableIndex(`${message || ''}:${toneMode}:${relationshipCue}`, choices.length)];
+}
+
+function humanizeReply({ text, opener, toneMode, relationshipCue, maxSentences = 4 }) {
+  const cleaned = stripCorporatePhrasing(String(text || '').trim());
+  const base = cleaned || fallback('').send_safe_reply;
+  const withOpener = startsWithAcknowledgment(base) ? base : `${opener} ${base}`;
+  const softened = tuneForTone(withOpener, toneMode, relationshipCue);
+  return limitSentences(softened.replace(/\s+/g, ' ').trim(), maxSentences);
+}
+
+function stripCorporatePhrasing(text) {
+  return text
+    .replace(/\bwe value your feedback[,.]?\s*/gi, '')
+    .replace(/\bper my previous message[,.]?\s*/gi, '')
+    .replace(/\bat your earliest convenience\b/gi, 'when you can')
+    .replace(/\bplease be advised that\b/gi, '')
+    .replace(/\bI apologize for any inconvenience this may have caused\b/gi, 'I’m sorry this created extra friction')
+    .trim();
+}
+
+function startsWithAcknowledgment(text) {
+  return /^(i hear|understood|thanks|thank you|you(?:'|’)re right|that sounds|i see|i understand|i want to be clear)/i.test(text.trim());
+}
+
+function tuneForTone(text, toneMode, relationshipCue) {
+  if (toneMode === 'executive') {
+    return text.replace(/I would like to/g, 'I’ll').replace(/we should/g, 'let’s');
+  }
+  if (toneMode === 'direct') {
+    return text.replace(/I’d like to take a moment to /g, 'I’ll ');
+  }
+  if (toneMode === 'repair' || relationshipCue === 'protect_trust') {
+    return text.includes('next step') ? text : `${text} My next step is to make this easier to move forward.`;
+  }
+  return text;
+}
+
+function limitSentences(text, maxSentences) {
+  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+  return sentences.slice(0, maxSentences).join(' ').trim();
+}
+
+function stableIndex(input, size) {
+  let hash = 0;
+  for (const ch of String(input)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return size ? hash % size : 0;
 }
 
 function safeJsonParse(raw) {
@@ -381,7 +589,13 @@ function fallback(raw) {
       collaborative: 'Thanks for raising this. I’d like to align on facts and next steps together.',
       firm_respectful: 'I hear your concern. I’m committed to solving this and will address it directly.'
     },
-    send_safe_reply: 'Thanks for the feedback. I’m reviewing this now and will reply with clear next steps shortly.',
+    send_safe_reply: 'I hear you. I’m reviewing this now so I can respond with clear next steps instead of reacting too quickly.',
+    human_layer: {
+      natural_opener: 'I hear you.',
+      relationship_cue: 'de_escalate',
+      tone_mode: 'balanced',
+      rewrite_notes: ['Fallback reply softened to sound less procedural.']
+    },
     coach_note: String(raw || '').slice(0, 1000)
   };
 }
