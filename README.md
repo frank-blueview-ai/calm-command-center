@@ -73,6 +73,17 @@ OPENAI_TEXT_MODEL=gpt-5.5
 OPENAI_IMAGE_MODEL=gpt-image-1
 ```
 
+### Mode C — OpenAI Realtime live voice (WebRTC)
+Add realtime settings:
+```env
+OPENAI_API_KEY=...
+OPENAI_REALTIME_MODEL=gpt-realtime
+OPENAI_REALTIME_VOICE=marin
+```
+
+Then restart the app and click **Start OpenAI Live Voice** in the UI.
+The browser sends an SDP offer to `POST /api/realtime/session`, and the server forwards it to OpenAI so your API key stays server-side.
+
 ## API
 ### `POST /api/analyze`
 Body:
@@ -91,6 +102,15 @@ Body:
   "analysis": { "...": "output from /api/analyze" }
 }
 ```
+
+### `POST /api/realtime/session`
+- Content-Type: `application/sdp`
+- Body: browser SDP offer text
+- Query params (optional):
+  - `tone` (balanced|warm|direct|executive|repair|firm)
+  - `goal` (string)
+
+Returns: SDP answer (`application/sdp`) for browser `setRemoteDescription`.
 
 ## Demo script (60 seconds)
 1. Paste a heated message.

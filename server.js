@@ -8,12 +8,15 @@ import OpenAI from 'openai';
 const execFileAsync = promisify(execFile);
 
 const app = express();
+app.use(express.text({ type: ['application/sdp', 'text/plain'], limit: '1mb' }));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static('public'));
 
 const PORT = Number(process.env.PORT || 8790);
 const TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || 'gpt-5.5';
 const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
+const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
+const REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || 'marin';
 
 const USE_OPENAI_API = Boolean(process.env.OPENAI_API_KEY);
 const ENABLE_NEUTRINORTC = String(process.env.ENABLE_NEUTRINORTC ?? 'true') !== 'false';
@@ -64,7 +67,9 @@ app.get('/healthz', async (_req, res) => {
     },
     mode: USE_OPENAI_API ? 'openai-api-enabled' : 'codex-login-via-openclaw',
     model: USE_OPENAI_API ? TEXT_MODEL : 'openai-codex/* (gateway default)',
-    imageModel: USE_OPENAI_API ? IMAGE_MODEL : 'tool-assisted/fallback'
+    imageModel: USE_OPENAI_API ? IMAGE_MODEL : 'tool-assisted/fallback',
+    realtimeModel: USE_OPENAI_API ? REALTIME_MODEL : null,
+    realtimeVoice: USE_OPENAI_API ? REALTIME_VOICE : null
   });
 });
 
@@ -106,6 +111,41 @@ app.post('/api/analyze', async (req, res) => {
   }
 });
 
+app.post('/api/realtime/session', async (req, res) => {
+  try {
+    if (!USE_OPENAI_API) {
+      return res.status(400).json({ error: 'OPENAI_API_KEY is required for OpenAI live voice.' });
+    }
+
+    const sdp = String(req.body || '').trim();
+    if (!sdp || !sdp.startsWith('v=')) {
+      return res.status(400).json({ error: 'WebRTC SDP offer is required.' });
+    }
+
+    const sessionConfig = buildRealtimeSessionConfig(req.query || {});
+    const fd = new FormData();
+    fd.set('sdp', sdp);
+    fd.set('session', JSON.stringify(sessionConfig));
+
+    const response = await fetch('https://api.openai.com/v1/realtime/calls', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: fd
+    });
+
+    const answerSdp = await response.text();
+    if (!response.ok) {
+      return res.status(response.status).type('text/plain').send(answerSdp || response.statusText);
+    }
+
+    return res.type('application/sdp').send(answerSdp);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Realtime session failed.', detail: String(error?.message || error) });
+  }
+});
 
 app.get('/api/demo-scenarios', (_req, res) => {
   res.json({ ok: true, scenarios: DEMO_SCENARIOS });
@@ -224,6 +264,33 @@ app.listen(PORT, () => {
   console.log(`OpenAI API mode: ${USE_OPENAI_API ? 'enabled' : 'disabled'}`);
   console.log(`NeutrinoRTC mode: ${ENABLE_NEUTRINORTC ? 'enabled' : 'disabled'} (${NEUTRINORTC_URL})`);
 });
+
+function buildRealtimeSessionConfig({ tone = 'balanced', goal = 'Respond calmly while protecting trust.' } = {}) {
+  return {
+    type: 'realtime',
+    model: REALTIME_MODEL,
+    instructions: buildRealtimeInstructions({ tone, goal }),
+    audio: {
+      output: {
+        voice: REALTIME_VOICE
+      }
+    }
+  };
+}
+
+function buildRealtimeInstructions({ tone, goal }) {
+  return [
+    'You are Calm Command Center in OpenAI Realtime live voice mode.',
+    'Have a natural speech-to-speech conversation, not a form-filling interview.',
+    'Use the Human Layer: short natural empathy, context acknowledgment, relationship-aware wording, and small variation.',
+    'Help the user de-escalate stressful messages in real time. Separate facts from assumptions before suggesting wording.',
+    `User goal: ${String(goal || '').trim()}`,
+    `Tone mode: ${String(tone || '').trim()}`,
+    'When the user asks what to send, give one concise send-safe reply that sounds like a person.',
+    'If the situation calls for a boundary, be firm without shaming or escalating.',
+    'Do not claim to have taken actions outside the conversation.'
+  ].join('\n');
+}
 
 async function runAnalyzeWithFallback({ preferredBackend, message, userGoal, tone, voiceSessionId }) {
   const ordered = backendOrder(preferredBackend);

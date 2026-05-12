@@ -6,6 +6,12 @@ const cardBtn = document.getElementById('cardBtn');
 const voiceBtn = document.getElementById('voiceBtn');
 const liveTurnBtn = document.getElementById('liveTurnBtn');
 const stopSpeakBtn = document.getElementById('stopSpeakBtn');
+const realtimeStartBtn = document.getElementById('realtimeStartBtn');
+const realtimeStopBtn = document.getElementById('realtimeStopBtn');
+const realtimePanel = document.getElementById('realtimePanel');
+const realtimeState = document.getElementById('realtimeState');
+const realtimeTranscript = document.getElementById('realtimeTranscript');
+const realtimeAudio = document.getElementById('realtimeAudio');
 const autoSpeak = document.getElementById('autoSpeak');
 const statusEl = document.getElementById('status');
 const result = document.getElementById('result');
@@ -21,6 +27,10 @@ const benchmarkRows = document.getElementById('benchmarkRows');
 let latestAnalysis = null;
 let demoScenarios = [];
 let latencySamples = [];
+let realtimeConnection = null;
+let realtimeStream = null;
+let realtimeChannel = null;
+let realtimeAssistantText = '';
 
 analyzeBtn.addEventListener('click', () => runAnalysis({ speakReply: autoSpeak.checked }));
 cardBtn.addEventListener('click', generateCard);
@@ -28,9 +38,140 @@ copySafe.addEventListener('click', copySafeReply);
 voiceBtn.addEventListener('click', runVoiceInput);
 liveTurnBtn.addEventListener('click', runLiveVoiceTurn);
 stopSpeakBtn.addEventListener('click', stopSpeaking);
+realtimeStartBtn.addEventListener('click', startOpenAIRealtimeVoice);
+realtimeStopBtn.addEventListener('click', stopOpenAIRealtimeVoice);
 benchmarkBtn.addEventListener('click', runBenchmark);
+window.addEventListener('beforeunload', () => { stopOpenAIRealtimeVoice({ quiet: true }); });
 loadDemoScenarios();
 
+async function startOpenAIRealtimeVoice() {
+  if (!window.RTCPeerConnection || !navigator.mediaDevices?.getUserMedia) {
+    setStatus('OpenAI live voice needs WebRTC and microphone support in this browser.');
+    return;
+  }
+
+  try {
+    stopSpeaking();
+    await stopOpenAIRealtimeVoice({ quiet: true });
+
+    realtimePanel.classList.remove('hidden');
+    setRealtimeState('Checking OpenAI API mode…');
+    setStatus('Starting OpenAI live voice…');
+    realtimeStartBtn.disabled = true;
+
+    const health = await fetch('/healthz').then((r) => r.json());
+    if (!health.availableBackends?.openaiApi) {
+      throw new Error('Set OPENAI_API_KEY in .env, restart the server, then try OpenAI Live Voice again.');
+    }
+
+    setRealtimeState('Requesting microphone…');
+
+    const pc = new RTCPeerConnection();
+    realtimeConnection = pc;
+
+    pc.ontrack = (event) => {
+      realtimeAudio.srcObject = event.streams[0];
+    };
+
+    pc.onconnectionstatechange = () => {
+      setRealtimeState(`Connection: ${pc.connectionState}`);
+      if (['closed', 'failed', 'disconnected'].includes(pc.connectionState)) {
+        realtimeStopBtn.disabled = true;
+        realtimeStartBtn.disabled = false;
+      }
+    };
+
+    realtimeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    realtimeStream.getAudioTracks().forEach((track) => pc.addTrack(track, realtimeStream));
+
+    realtimeChannel = pc.createDataChannel('oai-events');
+    realtimeChannel.addEventListener('open', () => {
+      setRealtimeState('Connected — speak naturally.');
+      realtimeStopBtn.disabled = false;
+      setStatus('OpenAI live voice connected. You can talk now.');
+    });
+    realtimeChannel.addEventListener('message', handleRealtimeEvent);
+    realtimeChannel.addEventListener('close', () => setRealtimeState('Disconnected'));
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    const params = new URLSearchParams({ tone: tone.value, goal: goal.value });
+    const response = await fetch(`/api/realtime/session?${params}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/sdp' },
+      body: offer.sdp
+    });
+
+    const answerSdp = await response.text();
+    if (!response.ok) throw new Error(answerSdp || 'OpenAI live voice session failed');
+
+    await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+  } catch (error) {
+    await stopOpenAIRealtimeVoice({ quiet: true });
+    setStatus(`OpenAI live voice error: ${error.message}`);
+    setRealtimeState('Disconnected');
+  } finally {
+    realtimeStartBtn.disabled = false;
+  }
+}
+
+async function stopOpenAIRealtimeVoice({ quiet = false } = {}) {
+  if (realtimeChannel) {
+    realtimeChannel.close();
+    realtimeChannel = null;
+  }
+
+  if (realtimeConnection) {
+    realtimeConnection.getSenders().forEach((sender) => sender.track?.stop());
+    realtimeConnection.close();
+    realtimeConnection = null;
+  }
+
+  if (realtimeStream) {
+    realtimeStream.getTracks().forEach((track) => track.stop());
+    realtimeStream = null;
+  }
+
+  realtimeAudio.srcObject = null;
+  realtimeStopBtn.disabled = true;
+  realtimeStartBtn.disabled = false;
+  setRealtimeState('Disconnected');
+  if (!quiet) setStatus('OpenAI live voice stopped.');
+}
+
+function handleRealtimeEvent(event) {
+  let data;
+  try {
+    data = JSON.parse(event.data);
+  } catch {
+    return;
+  }
+
+  if (data.type === 'response.audio_transcript.delta') {
+    realtimeAssistantText += data.delta || '';
+    realtimeTranscript.textContent = realtimeAssistantText;
+  }
+
+  if (data.type === 'response.audio_transcript.done') {
+    realtimeAssistantText = data.transcript || realtimeAssistantText;
+    realtimeTranscript.textContent = realtimeAssistantText || 'Assistant responded in audio.';
+  }
+
+  if (data.type === 'input_audio_buffer.speech_started') {
+    realtimeAssistantText = '';
+    realtimeTranscript.textContent = 'Listening…';
+  }
+
+  if (data.type === 'error') {
+    const message = data.error?.message || 'Realtime API event error.';
+    setStatus(`OpenAI live voice error: ${message}`);
+  }
+}
+
+function setRealtimeState(text) {
+  realtimeState.textContent = text;
+}
 
 async function loadDemoScenarios() {
   try {
