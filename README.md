@@ -9,7 +9,8 @@ Paste (or speak) a stressful message and get:
 - Facts vs assumptions
 - Risks
 - 3 reply styles (calm short, collaborative, firm respectful)
-- One **send-safe** final reply
+- A **Human Layer** that adds natural empathy, context acknowledgment, relationship-aware cues, and micro-variation
+- One **send-safe** final reply that goes through a “say it like a person” rewrite pass
 
 Then generate a shareable visual brief card with **Image Gen**.
 
@@ -29,6 +30,7 @@ The UI status line shows backend + latency per turn for direct comparison.
 - Calm under pressure
 - Human-first and relationship-protective
 - Fact/assumption separation before action
+- Human texture over policy-text phrasing
 - Ethical de-escalation over reactive escalation
 
 ## Tech
@@ -78,7 +80,7 @@ Body:
 {
   "message": "text",
   "userGoal": "Respond calmly and professionally.",
-  "tone": "balanced"
+  "tone": "warm|direct|executive|repair|firm|balanced"
 }
 ```
 
