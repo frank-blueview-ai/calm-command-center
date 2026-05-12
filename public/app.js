@@ -197,6 +197,7 @@ function renderAnalysis(a) {
   fillText('collaborative', a.reply_options?.collaborative);
   fillText('firm_respectful', a.reply_options?.firm_respectful);
   fillText('send_safe_reply', a.send_safe_reply);
+  fillHumanLayer(a.human_layer);
 }
 
 async function generateCard() {
@@ -326,6 +327,13 @@ function speakText(text) {
   utterance.onend = () => setStatus('Assistant done speaking.');
   utterance.onerror = () => setStatus('Speech output error.');
   speechSynthesis.speak(utterance);
+}
+
+function fillHumanLayer(layer = {}) {
+  fillText('human_opener', layer.natural_opener ? `Opener: ${layer.natural_opener}` : 'Opener: —');
+  fillText('relationship_cue', layer.relationship_cue ? `Cue: ${layer.relationship_cue.replaceAll('_', ' ')}` : 'Cue: —');
+  fillText('tone_mode', layer.tone_mode ? `Tone: ${layer.tone_mode}` : 'Tone: —');
+  fillList('rewrite_notes', layer.rewrite_notes);
 }
 
 function fillText(id, value) {
